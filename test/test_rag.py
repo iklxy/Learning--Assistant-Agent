@@ -7,7 +7,7 @@ from src.rag.rag import RAG
 def main():
     config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'rag.yaml')
     real_RAG = RAG(config_path= config_path)
-    real_RAG.display_chunks(num_samples=25)
+    real_RAG.display_chunks(num_samples=100)
 
 
 if __name__ == "__main__":

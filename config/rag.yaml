@@ -1,7 +1,26 @@
 #数据加载器的配置
 data:
-  data_dir: "./data" #原始数据目录相对路径
+  data_dir: "./data/raw" #原始数据目录相对路径
+  test_queries_path: "./data/test_queries.json" #测试查询文件路径
 
 #数据分块的配置
 chunk:
+  chunk_size: "512"  #每个chunk的最大字符数
+  chunk_overlap: "100"  #chunk之间的重叠字符数
+
+# 扫描版PDF的缓存处理
+cache:
+  enabled: true
+  cache_dir: "./data/cache" #缓存目录相对路径
+
+# 嵌入模型的配置
+embedder:
+  model_name: "text-embedding-3-small" #使用的嵌入模型名称
+  model_dimensions: "1536" #嵌入向量的维度
+
+# 向量数据库的配置
+vector_store:
+  persist_directory: "./data/vector_store" #向量数据库持久化目录相对路径
+  collection_name: "code_study" #向量数据库集合名称
+  distance_metric: "cosine" #向量相似度计算方式
   

@@ -2,17 +2,60 @@ import os
 import numpy as np
 import tqdm
 from langchain_community.document_loaders import (
-    PyMuPDFLoader, 
-    TextLoader, 
+    PyMuPDFLoader,
+    TextLoader,
     UnstructuredMarkdownLoader
 )
-import Vision
-from Quartz import CIImage
-from Foundation import NSURL
 import io
 from PIL import Image
 from pdf2image import convert_from_path
 from langchain_core.documents import Document
+
+# Optional imports for macOS Vision Framework (only needed for scanned PDFs)
+try:
+    import Vision
+    from Quartz import CIImage
+    from Foundation import NSURL
+    HAS_VISION_FRAMEWORK = True
+except ImportError:
+    HAS_VISION_FRAMEWORK = False
+
+def _enhance_pdf_metadata(docs, file_path):
+    """
+    增强 PDF Document 的 metadata
+   
+    参数：
+    docs - PyMuPDFLoader 返回的 Document 列表
+    file_path - PDF 文件路径
+    method - 加载方法标识（"PyMuPDF" 或 "Apple Vision OCR"）
+   
+    职责：
+    为每个 Document 添加统一的自定义元数据
+   
+    返回：增强后的 Document 列表
+    """
+    enhanced_docs = []
+
+    for doc in docs:
+        metadata = doc.metadata.copy() if doc.metadata else {}
+
+        # 添加或覆盖自定义字段
+        metadata['source'] = file_path
+        metadata['type'] = 'pdf'
+
+        # 如果原始 metadata 中没有 page，尝试添加
+        if 'page' not in metadata:
+            metadata['page'] = doc.metadata.get('page', 1) if doc.metadata else 1
+
+        # 创建新的 Document 对象（而不是修改原有的）
+        enhanced_doc = Document(
+            page_content=doc.page_content,
+            metadata=metadata
+        )
+        enhanced_docs.append(enhanced_doc)
+
+    return enhanced_docs
+
 # 扫描版PDF加载器
 def ScanPDFLoader(file_path):
     """         
@@ -60,7 +103,6 @@ def ScanPDFLoader(file_path):
             metadata={
                 "source": file_path,
                 "page": page_num + 1,
-                "method": "Apple Vision OCR",
                 "type":"pdf"
             }
         )
@@ -69,29 +111,50 @@ def ScanPDFLoader(file_path):
     return all_documents
 
 # 总加载器
-def load_multi_format_data(data_dir):
+def load_multi_format_data(data_dir,cache_dir,use_cache=True):
     "参数："
     "data_dir:存放配置文件的文件夹路径,其中存储着文件存储的真实路径"
-
+    "cache_dir:存放缓存文件的文件夹路径"
+    "use_cache:是否启用缓存,如果启用且缓存文件存在,则直接加载缓存文件,否则重新加载数据并生成缓存文件"
     all_documents = []
 
+    # 先检查是否启用缓存，并且缓存文件存在
+    cache_file = os.path.join(cache_dir, "cached_documents.pkl")
+    if use_cache and os.path.exists(cache_file):
+        print("检测到缓存文件，正在加载...")
+        import pickle
+        with open(cache_file, 'rb') as f:
+            all_documents = pickle.load(f)
+        print(f"成功从缓存加载 {len(all_documents)} 个文档")
+        return all_documents
+    
     # 加载文件
-    for root, dirs,files in os.walk(data_dir):
+    for root, dirs, files in os.walk(data_dir):
         for file in files:
             file_path = os.path.join(root, file)
-            if file.endswith(".cpp") or file.endswith(".h") or file.endswith(".c") or file.endswith(".go"):
-                loader = TextLoader(file_path)                                                                                                                                   
-                all_documents.extend(loader.load())
-            elif file.endswith(".pdf"):
-            # 先用PyMuPDFLoader尝试加载                                                                                                                          
-                loader = PyMuPDFLoader(file_path)                                                                                                                                        
-                docs = loader.load()                                                                                                                                                     
-                                                                                                                                                                               
-                # 如果没有提取到文字，改用OCR                                                                                                                              
+
+            # 文件类型检查
+            if file.endswith(".pdf"):
+                # 先用PyMuPDFLoader尝试加载（文字版PDF）
+                loader = PyMuPDFLoader(file_path)
+                docs = loader.load()
+
+                # 如果没有提取到文字，改用OCR（扫描版PDF）
                 if not docs or all(len(doc.page_content.strip()) == 0 for doc in docs):
-                    print(f"检测到扫描版PDF: {file_path}，开始OCR处理...")                                                                                                               
-                    docs = ScanPDFLoader(file_path)                                                                                                                                   
-                all_documents.extend(docs)
-                
+                    print(f"检测到扫描版PDF: {file_path}，开始OCR处理...")
+                    docs = ScanPDFLoader(file_path)
+                else:
+                    docs = _enhance_pdf_metadata(docs, file_path)
+
+                all_documents.extend(docs)    
     print("成功加载",len(all_documents),"个文件")
+
+    # 加载完成后，如果启用缓存，则将结果保存到缓存文件
+    if use_cache:
+        os.makedirs(cache_dir, exist_ok=True)
+        import pickle
+        with open(cache_file, 'wb') as f:
+            pickle.dump(all_documents, f)
+        print(f"已将 {len(all_documents)} 个文档保存到缓存")
+        
     return all_documents
