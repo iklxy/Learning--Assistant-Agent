@@ -23,4 +23,17 @@ vector_store:
   persist_directory: "./data/vector_store" #向量数据库持久化目录相对路径
   collection_name: "code_study" #向量数据库集合名称
   distance_metric: "cosine" #向量相似度计算方式
-  
+
+# 混合检索的配置
+retriever:
+  strategy: "hybrid" #检索策略: bm25, semantic, hybrid
+  bm25:
+    enabled: true
+    top_k: 20 #BM25检索返回的结果数
+  semantic:
+    enabled: true
+    top_k: 20 #语义检索返回的结果数
+  hybrid:
+    alpha: 0.15 #BM25权重(0-1), 语义权重为(1-alpha)，更小的alpha给予语义搜索更高权重
+    top_k: 10 #最终返回的结果数
+

@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 from langchain_core.documents import Document
 
 class VectorStore:
+    
     def __init__(self, embedder, persist_directory: str, collection_name: str, distance_metric: str = "cosine"):
         """
         初始化向量存储

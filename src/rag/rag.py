@@ -3,6 +3,8 @@ from .data_loader import load_multi_format_data
 from .chunker import split_pdf_to_chunks
 from .embedder import Embedder
 from .vector_store import VectorStore
+from .retriever import BM25Retriever, SemanticRetriever, HybridRetriever
+from .query_expander import LLMQueryExpander
 from ..utils.config import load_config
 from typing import List, Dict, Optional
 from langchain_core.documents import Document
@@ -66,7 +68,7 @@ class RAG:
             print("向量库已存在，使用现有的")
         else:
             print("创建新的向量库")
-            
+
             # 生成嵌入
             print("生成嵌入向量并存储到向量库")
             enhanced_chunks = self.embedder.embed_chunks(self.chunks)
@@ -74,6 +76,16 @@ class RAG:
             # 存储到向量库
             self.vector_store.add_chunks(enhanced_chunks)
             print("向量库创建完成")
+
+        # 步骤7：初始化检索器
+        print("\n初始化检索器")
+        self._initialize_retrievers()
+        print("检索器初始化完成")
+
+        # 步骤8：初始化查询改写器
+        print("\n初始化查询改写器")
+        self.query_expander = LLMQueryExpander()
+        print("查询改写器初始化完成")
 
         print("\nRAG 系统初始化完成！\n")
 
@@ -144,13 +156,30 @@ class RAG:
         except:
             return False
 
-    def search(self, query: str, top_k: int = 5) -> List[Dict]:
+    def _initialize_retrievers(self) -> None:
+        """
+        初始化所有检索器（BM25、语义、混合）
+
+        职责：
+          1. 创建BM25检索器
+          2. 创建语义检索器
+          3. 创建混合检索器
+        """
+        retriever_config = self.config.get('retriever', {})
+
+        self.bm25_retriever = BM25Retriever(self.chunks)
+        self.semantic_retriever = SemanticRetriever(self.vector_store, self.embedder)
+        self.hybrid_retriever = HybridRetriever(self.bm25_retriever, self.semantic_retriever)
+
+    def search(self, query: str, top_k: int = 5, strategy: str = None, use_expansion: bool = True) -> List[Dict]:
         """
         核心查询接口
 
         参数：
           query - 用户查询文本
           top_k - 返回结果数量(默认设置为5)
+          strategy - 检索策略 ('bm25', 'semantic', 'hybrid')，默认使用config中的配置
+          use_expansion - 是否使用查询改写，默认为True
 
         返回：
           相关 chunks 列表，每个结果包含：
@@ -159,30 +188,71 @@ class RAG:
               "content": "...",
               "source": "data/STL.pdf",
               "page": 12,
-              "similarity": "92.45%",
+              "score": 0.85,
               "metadata": {...}
             }
         """
         print(f"\n查询: {query}")
 
         try:
-            # 步骤1：嵌入查询文本
-            query_vector = self.embedder.embed_text(query)
+            retriever_config = self.config.get('retriever', {})
+            if strategy is None:
+                strategy = retriever_config.get('strategy', 'hybrid')
 
-            # 步骤2：向量相似度搜索
-            results = self.vector_store.search(query_vector, top_k=top_k)
+            print(f"使用 {strategy} 检索策略")
 
-            # 步骤3：格式化结果
+            if use_expansion:
+                expanded_queries = self.query_expander.expand_query(query)
+            else:
+                expanded_queries = [query]
+
+            all_results = {}
+
+            for expanded_query in expanded_queries:
+                print(f"\n执行检索: {expanded_query}")
+
+                if strategy == 'bm25':
+                    results = self.bm25_retriever.search(expanded_query, top_k=top_k)
+                elif strategy == 'semantic':
+                    results = self.semantic_retriever.search(expanded_query, top_k=top_k)
+                elif strategy == 'hybrid':
+                    alpha = float(retriever_config.get('hybrid', {}).get('alpha', 0.3))
+                    results = self.hybrid_retriever.search(expanded_query, top_k=top_k, alpha=alpha)
+                else:
+                    raise ValueError(f"不支持的检索策略: {strategy}")
+
+                for result in results:
+                    content_hash = hash(result['content']) % 10000000
+                    if content_hash not in all_results:
+                        all_results[content_hash] = {
+                            'chunk_id': result['chunk_id'],
+                            'content': result['content'],
+                            'metadata': result['metadata'],
+                            'score': float(result['score']),
+                            'count': 1
+                        }
+                    else:
+                        all_results[content_hash]['score'] += float(result['score'])
+                        all_results[content_hash]['count'] += 1
+
+            merged_results = list(all_results.values())
+
+            for result in merged_results:
+                base_score = result['score'] / result['count']
+                frequency_boost = 1 + (result['count'] - 1) * 0.15
+                result['score'] = base_score * frequency_boost
+
+            merged_results = sorted(merged_results, key=lambda x: x['score'], reverse=True)[:top_k]
+
             formatted_results = []
-            for rank, result in enumerate(results, 1):
+            for rank, result in enumerate(merged_results, 1):
                 formatted_results.append({
                     "rank": rank,
                     "chunk_id": result['chunk_id'],
                     "content": result['content'],
                     "source": result['metadata'].get('source', 'Unknown'),
                     "page": result['metadata'].get('page'),
-                    "similarity": f"{result['similarity']:.2%}",
-                    "distance": f"{result['distance']:.4f}",
+                    "score": f"{result['score']:.4f}",
                     "metadata": result['metadata']
                 })
 
@@ -206,8 +276,7 @@ class RAG:
 
         for result in results:
             print(f"\n【结果 {result['rank']}】")
-            print(f"相似度: {result['similarity']}")
-            print(f"距离: {result['distance']}")
+            print(f"得分: {result['score']}")
             print(f"来源: {result['source']}")
             if result['page']:
                 print(f"页码: {result['page']}")
@@ -216,10 +285,8 @@ class RAG:
             print("-" * 80)
 
             if show_full_content:
-                # 显示完整内容
                 print(result['content'])
             else:
-                # 显示摘要
                 content_preview = result['content'][:500]
                 if len(result['content']) > 500:
                     content_preview += "..."
