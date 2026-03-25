@@ -1,39 +1,51 @@
-#数据加载器的配置
+# Data loader configuration
 data:
-  data_dir: "./data/raw" #原始数据目录相对路径
-  test_queries_path: "./data/test_queries.json" #测试查询文件路径
+  data_dir: "./data/raw" #Directory path for raw data
+  test_queries_path: "./data/test_queries.json" #Path to test queries file
 
-#数据分块的配置
+# Data processor configuration
+data_processor:
+  enable_cleaning: true #Enable text cleaning (remove noise)
+  enable_summary: true #Generate chunk summaries
+  enable_keywords: true #Extract chunk keywords
+
+# Text chunking configuration
 chunk:
-  chunk_size: "512"  #每个chunk的最大字符数
-  chunk_overlap: "100"  #chunk之间的重叠字符数
+  chunk_size: "512"  #Maximum characters per chunk
+  chunk_overlap: "100"  #Character overlap between chunks
 
-# 扫描版PDF的缓存处理
+# Caching for scanned PDFs
 cache:
   enabled: true
-  cache_dir: "./data/cache" #缓存目录相对路径
+  cache_dir: "./data/cache" #Cache directory path
 
-# 嵌入模型的配置
+# Embedding model configuration
 embedder:
-  model_name: "text-embedding-3-small" #使用的嵌入模型名称
-  model_dimensions: "1536" #嵌入向量的维度
+  model_name: "text-embedding-3-small" #Embedding model name
+  model_dimensions: "1536" #Embedding vector dimensions
 
-# 向量数据库的配置
+# Vector database configuration
 vector_store:
-  persist_directory: "./data/vector_store" #向量数据库持久化目录相对路径
-  collection_name: "code_study" #向量数据库集合名称
-  distance_metric: "cosine" #向量相似度计算方式
+  persist_directory: "./data/vector_store" #Vector database persistence directory
+  collection_name: "code_study" #Vector database collection name
+  distance_metric: "cosine" #Distance metric for similarity calculation
 
-# 混合检索的配置
+# Hybrid retrieval configuration
 retriever:
-  strategy: "hybrid" #检索策略: bm25, semantic, hybrid
+  strategy: "hybrid" #Retrieval strategy: bm25, semantic, hybrid
   bm25:
     enabled: true
-    top_k: 20 #BM25检索返回的结果数
+    top_k: 20 #Number of results from BM25 retrieval
   semantic:
     enabled: true
-    top_k: 20 #语义检索返回的结果数
+    top_k: 20 #Number of results from semantic retrieval
   hybrid:
-    alpha: 0.15 #BM25权重(0-1), 语义权重为(1-alpha)，更小的alpha给予语义搜索更高权重
-    top_k: 10 #最终返回的结果数
+    alpha: 0.15 #BM25 weight (0-1), semantic weight is (1-alpha). Smaller alpha favors semantic search
+    top_k: 10 #Final number of results
+
+# Cross-encoder reranking configuration
+reranker:
+  enabled: true #Enable reranking
+  model_name: "cross-encoder/ms-marco-MiniLM-L-12-v2" #Cross-encoder model for English text (lightweight and efficient)
+  top_k: 5 #Final number of results after reranking
 

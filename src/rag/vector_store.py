@@ -54,64 +54,81 @@ class VectorStore:
 
         return chunk_id
     
-    def add_chunks(self, chunks: list[Document]) -> None:
+    def add_chunks(self, chunks: list[Document], batch_size: int = 5000) -> None:
         """
-        核心方法：将增强的 chunks 添加到向量库
-   
-        参数：chunks - 带有 embedding 的 Document 列表
-   
+        核心方法：将增强的 chunks 添加到向量库（分批处理）
+
+        参数：
+          chunks - 带有 embedding 的 Document 列表
+          batch_size - 每批处理的chunk数量（默认5000，避免超过ChromaDB的5461限制）
+
         职责：
-        1. 提取向量、文本、metadata
-        2. 生成唯一 ID
-        3. 存储到 Chroma
-        4. 保存到磁盘
+        1. 分批处理chunks（避免超过批处理限制）
+        2. 提取向量、文本、metadata
+        3. 生成唯一 ID
+        4. 存储到 Chroma
+        5. 保存到磁盘
         """
         if not chunks:
             print("chunks 列表为空")
             return
 
-        print(f"开始添加 {len(chunks)} 个 chunks 到向量库...")
+        print(f"开始添加 {len(chunks)} 个 chunks 到向量库（批次大小：{batch_size}）...")
 
-        # 准备数据
-        ids = []
-        embeddings = []
-        metadatas = []
-        documents = []
+        # 分批处理
+        total_added = 0
+        for batch_idx in range(0, len(chunks), batch_size):
+            batch_chunks = chunks[batch_idx:batch_idx + batch_size]
+            batch_num = batch_idx // batch_size + 1
+            total_batches = (len(chunks) + batch_size - 1) // batch_size
 
-        for idx, chunk in enumerate(chunks):
-            # 步骤1：生成 ID
-            source = chunk.metadata.get('source', 'unknown')
-            chunk_id = self._generate_chunk_id(source, idx)
-            ids.append(chunk_id)
+            print(f"  处理批次 {batch_num}/{total_batches} ({len(batch_chunks)} 个chunks)...")
 
-            # 步骤2：提取向量
-            embedding_data = chunk.metadata.get('embedding')
-            if embedding_data is None:
-                raise ValueError(f"Chunk {chunk_id} 没有 embedding 字段")
+            # 准备批次数据
+            ids = []
+            embeddings = []
+            metadatas = []
+            documents = []
 
-            embeddings.append(embedding_data)
+            for idx, chunk in enumerate(batch_chunks):
+                # 步骤1：生成 ID
+                source = chunk.metadata.get('source', 'unknown')
+                # 使用全局索引而不是批次内索引
+                global_idx = batch_idx + idx
+                chunk_id = self._generate_chunk_id(source, global_idx)
+                ids.append(chunk_id)
 
-            # 步骤3：提取 metadata
-            metadata = {k: v for k, v in chunk.metadata.items() if k != 'embedding'}
-            # 确保 metadata 中的值都是可序列化的
-            metadata = self._sanitize_metadata(metadata)
-            metadatas.append(metadata)
+                # 步骤2：提取向量
+                embedding_data = chunk.metadata.get('embedding')
+                if embedding_data is None:
+                    raise ValueError(f"Chunk {chunk_id} 没有 embedding 字段")
 
-            # 步骤4：提取文本内容
-            documents.append(chunk.page_content)
+                embeddings.append(embedding_data)
 
-        # 步骤5：批量添加到 Chroma
-        try:
-            self.collection.add(
-                ids=ids,
-                embeddings=embeddings,
-                metadatas=metadatas,
-                documents=documents
-            )
-            print(f"成功添加 {len(chunks)} 个 chunks")
-        except Exception as e:
-            print(f"添加失败: {e}")
-            raise
+                # 步骤3：提取 metadata
+                metadata = {k: v for k, v in chunk.metadata.items() if k != 'embedding'}
+                # 确保 metadata 中的值都是可序列化的
+                metadata = self._sanitize_metadata(metadata)
+                metadatas.append(metadata)
+
+                # 步骤4：提取文本内容
+                documents.append(chunk.page_content)
+
+            # 步骤5：添加当前批次到 Chroma
+            try:
+                self.collection.add(
+                    ids=ids,
+                    embeddings=embeddings,
+                    metadatas=metadatas,
+                    documents=documents
+                )
+                total_added += len(batch_chunks)
+                print(f"    ✓ 批次 {batch_num} 添加完成，累计: {total_added}/{len(chunks)}")
+            except Exception as e:
+                print(f"    ✗ 批次 {batch_num} 添加失败: {e}")
+                raise
+
+        print(f"✓ 所有chunks添加完成，总计: {total_added} 个")
 
         # 注意：PersistentClient 会自动持久化数据，无需手动调用 persist()
 

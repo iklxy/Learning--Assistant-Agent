@@ -10,6 +10,8 @@ import io
 from PIL import Image
 from pdf2image import convert_from_path
 from langchain_core.documents import Document
+import yaml
+import re
 
 # Optional imports for macOS Vision Framework (only needed for scanned PDFs)
 try:
@@ -110,51 +112,95 @@ def ScanPDFLoader(file_path):
                                                                                                                                                                                
     return all_documents
 
-# 总加载器
-def load_multi_format_data(data_dir,cache_dir,use_cache=True):
-    "参数："
-    "data_dir:存放配置文件的文件夹路径,其中存储着文件存储的真实路径"
-    "cache_dir:存放缓存文件的文件夹路径"
-    "use_cache:是否启用缓存,如果启用且缓存文件存在,则直接加载缓存文件,否则重新加载数据并生成缓存文件"
+def load_markdown_file(file_path):
+    """
+    Load Markdown file.
+
+    Parameters: file_path - Absolute path to Markdown file
+    Returns: List of Document objects
+    """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # 移除 YAML frontmatter
+    if content.startswith('---'):
+        parts = content.split('---', 2)
+        if len(parts) >= 3:
+            content = parts[2]
+
+    enhanced_docs = []
+    doc = Document(
+        page_content=content.strip(),
+        metadata={
+            'source': file_path,
+            'type': 'markdown',
+            'page': 1
+        }
+    )
+    enhanced_docs.append(doc)
+
+    return enhanced_docs
+
+
+# Main loader for multiple file formats
+def load_multi_format_data(data_dir, cache_dir, use_cache=True):
+    """
+    Load documents from multiple file formats (PDF, Markdown, etc.)
+
+    Parameters:
+      data_dir: Directory containing data files
+      cache_dir: Directory for caching loaded documents
+      use_cache: Whether to use cache. If enabled and cache exists, load from cache;
+                 otherwise load fresh data and generate cache
+    """
     all_documents = []
 
-    # 先检查是否启用缓存，并且缓存文件存在
+    # Check if cache exists and is enabled
     cache_file = os.path.join(cache_dir, "cached_documents.pkl")
     if use_cache and os.path.exists(cache_file):
-        print("检测到缓存文件，正在加载...")
+        print("Cache file detected. Loading from cache...")
         import pickle
         with open(cache_file, 'rb') as f:
             all_documents = pickle.load(f)
-        print(f"成功从缓存加载 {len(all_documents)} 个文档")
+        print(f"Successfully loaded {len(all_documents)} documents from cache")
         return all_documents
-    
-    # 加载文件
+
+    # Load files from disk
     for root, dirs, files in os.walk(data_dir):
         for file in files:
             file_path = os.path.join(root, file)
 
-            # 文件类型检查
+            # Check file type
             if file.endswith(".pdf"):
-                # 先用PyMuPDFLoader尝试加载（文字版PDF）
+                # Try PyMuPDFLoader first (for text-based PDFs)
                 loader = PyMuPDFLoader(file_path)
                 docs = loader.load()
 
-                # 如果没有提取到文字，改用OCR（扫描版PDF）
+                # If no text extracted, use OCR (for scanned PDFs)
                 if not docs or all(len(doc.page_content.strip()) == 0 for doc in docs):
-                    print(f"检测到扫描版PDF: {file_path}，开始OCR处理...")
+                    print(f"Detected scanned PDF: {file_path}. Starting OCR processing...")
                     docs = ScanPDFLoader(file_path)
                 else:
                     docs = _enhance_pdf_metadata(docs, file_path)
 
-                all_documents.extend(docs)    
-    print("成功加载",len(all_documents),"个文件")
+                all_documents.extend(docs)
 
-    # 加载完成后，如果启用缓存，则将结果保存到缓存文件
+            elif file.endswith(".md"):
+                # Load Markdown file
+                try:
+                    docs = load_markdown_file(file_path)
+                    all_documents.extend(docs)
+                except Exception as e:
+                    print(f"Failed to load Markdown file: {file_path}, Error: {e}")
+
+    print(f"Successfully loaded {len(all_documents)} documents")
+
+    # Save to cache after loading, if cache is enabled
     if use_cache:
         os.makedirs(cache_dir, exist_ok=True)
         import pickle
         with open(cache_file, 'wb') as f:
             pickle.dump(all_documents, f)
-        print(f"已将 {len(all_documents)} 个文档保存到缓存")
+        print(f"Saved {len(all_documents)} documents to cache")
         
     return all_documents

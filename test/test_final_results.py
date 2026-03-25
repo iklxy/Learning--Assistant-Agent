@@ -11,9 +11,9 @@ def test_query_with_expansion():
     rag = RAG(config_path=config_path)
 
     test_queries = [
-        "什么是STL",
-        "怎样使用vector",
-        "如何实现二叉树"
+        "What are the two possible values a variable of type bool can hold in C++?",
+        "How is a bool value converted to an int during integral promotions?",
+        "Is bool treated as a distinct type during overload resolution?"
     ]
 
     for query in test_queries:
@@ -36,7 +36,7 @@ def test_query_with_expansion():
             if result['page']:
                 print(f"  页码: {result['page']}")
             print(f"  内容摘要:")
-            print(f"  {result['content'][:200]}...")
+            print(f"  {result['content']}")
             print(f"  {'-' * 85}")
 
 
@@ -83,8 +83,6 @@ if __name__ == "__main__":
 
     try:
         test_query_with_expansion()
-        test_without_expansion()
-
         print("\n" + "=" * 90)
         print("测试完成！")
         print("=" * 90)

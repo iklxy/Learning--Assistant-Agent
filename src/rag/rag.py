@@ -1,9 +1,11 @@
 #定义RAG类
 from .data_loader import load_multi_format_data
-from .chunker import split_pdf_to_chunks
+from .chunker import split_pdf_to_chunks, split_markdown_to_chunks
 from .embedder import Embedder
 from .vector_store import VectorStore
 from .retriever import BM25Retriever, SemanticRetriever, HybridRetriever
+from .reranker import CrossEncoderReranker
+from .data_processor import DataProcessor
 from .query_expander import LLMQueryExpander
 from ..utils.config import load_config
 from typing import List, Dict, Optional
@@ -44,10 +46,29 @@ class RAG:
         )
         print(f"加载了 {len(self.all_documents)} 个文档")
 
+        # 步骤2.5：初始化数据处理器并清洁文档
+        print("\n初始化数据处理器")
+        self.data_processor = DataProcessor(
+            enable_cleaning=self.config.get('data_processor', {}).get('enable_cleaning', True),
+            enable_summary=self.config.get('data_processor', {}).get('enable_summary', True),
+            enable_keywords=self.config.get('data_processor', {}).get('enable_keywords', True)
+        )
+        print("数据处理器初始化完成")
+
+        # 清洁文档
+        print("\n清洁文档...")
+        self.all_documents = self.data_processor.process_documents(self.all_documents)
+        print("文档清洁完成")
+
         # 步骤3：分类和分块
         print("\n文档分类和分块")
         self.chunks = self._split_and_chunk_documents()
         print(f"分块完成：共 {len(self.chunks)} 个 chunks")
+
+        # 增强chunk（添加摘要、关键词等）
+        print("\n增强chunks元数据...")
+        self.chunks = self.data_processor.process_chunks(self.chunks, self.all_documents)
+        print("chunks增强完成")
 
         # 步骤4：初始化 Embedder
         print("\n初始化嵌入模型")
@@ -87,6 +108,11 @@ class RAG:
         self.query_expander = LLMQueryExpander()
         print("查询改写器初始化完成")
 
+        # 步骤9：初始化重排序器
+        print("\n初始化重排序器")
+        self._initialize_reranker()
+        print("重排序器初始化完成")
+
         print("\nRAG 系统初始化完成！\n")
 
     def _split_and_chunk_documents(self) -> List[Document]:
@@ -94,16 +120,17 @@ class RAG:
         分类文档并进行分块
 
         职责：
-          1. 按文件类型分类（仅处理PDF）
+          1. 按文件类型分类（PDF、Markdown等）
           2. 调用对应的分块器
           3. 返回分块结果
 
         返回：分块后的 Document 列表
         """
-        # 分类文档（仅提取PDF）
-        pdf_docs = self._classify_documents(self.all_documents)
+        # 分类文档
+        pdf_docs = self._classify_documents(self.all_documents, doc_type='pdf')
+        md_docs = self._classify_documents(self.all_documents, doc_type='markdown')
 
-        print(f"   分类结果：{len(pdf_docs)} 个 PDF 文件")
+        print(f"   分类结果：{len(pdf_docs)} 个 PDF 文件，{len(md_docs)} 个 Markdown 文件")
 
         # 分块
         pdf_chunks = split_pdf_to_chunks(
@@ -112,27 +139,41 @@ class RAG:
             chunk_overlap=self.chunk_overlap
         ) if pdf_docs else []
 
-        print(f"   分块结果：{len(pdf_chunks)} 个 PDF chunks")
+        md_chunks = split_markdown_to_chunks(
+            md_docs,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap
+        ) if md_docs else []
 
-        return pdf_chunks
+        print(f"   分块结果：{len(pdf_chunks)} 个 PDF chunks，{len(md_chunks)} 个 Markdown chunks")
+
+        # 合并所有chunks
+        all_chunks = pdf_chunks + md_chunks
+
+        return all_chunks
 
     @staticmethod
-    def _classify_documents(documents: List[Document]) -> List[Document]:
+    def _classify_documents(documents: List[Document], doc_type: str = 'pdf') -> List[Document]:
         """
         按文件类型分类文档
 
-        参数：documents - 所有文档列表
+        参数：
+          documents - 所有文档列表
+          doc_type - 要过滤的文件类型 ('pdf' 或 'markdown')
 
-        返回：PDF 文档列表
+        返回：指定类型的文档列表
         """
-        pdf_docs = []
+        classified_docs = []
 
         for doc in documents:
-            source = doc.metadata.get("source", "")
-            if source.endswith(".pdf"):
-                pdf_docs.append(doc)
+            doc_file_type = doc.metadata.get("type", "")
 
-        return pdf_docs
+            if doc_type == 'pdf' and doc_file_type == 'pdf':
+                classified_docs.append(doc)
+            elif doc_type == 'markdown' and doc_file_type == 'markdown':
+                classified_docs.append(doc)
+
+        return classified_docs
 
     def _check_vector_store_exists(self) -> bool:
         """
@@ -170,6 +211,23 @@ class RAG:
         self.bm25_retriever = BM25Retriever(self.chunks)
         self.semantic_retriever = SemanticRetriever(self.vector_store, self.embedder)
         self.hybrid_retriever = HybridRetriever(self.bm25_retriever, self.semantic_retriever)
+
+    def _initialize_reranker(self) -> None:
+        """
+        初始化重排序器
+
+        职责：
+          1. 检查重排序是否启用
+          2. 如果启用，加载交叉编码器模型
+        """
+        reranker_config = self.config.get('reranker', {})
+        self.reranker_enabled = reranker_config.get('enabled', False)
+
+        if self.reranker_enabled:
+            model_name = reranker_config.get('model_name', 'BAAI/bge-reranker-base')
+            self.reranker = CrossEncoderReranker(model_name=model_name)
+        else:
+            self.reranker = None
 
     def search(self, query: str, top_k: int = 5, strategy: str = None, use_expansion: bool = True) -> List[Dict]:
         """
@@ -244,9 +302,19 @@ class RAG:
 
             merged_results = sorted(merged_results, key=lambda x: x['score'], reverse=True)[:top_k]
 
+            # 步骤：应用重排序（如果启用）
+            if self.reranker_enabled and self.reranker is not None:
+                print("\n应用交叉编码器重排序...")
+                reranker_config = self.config.get('reranker', {})
+                reranker_top_k = reranker_config.get('top_k', top_k)
+
+                # 使用原始查询进行重排序（不使用改写后的查询）
+                merged_results = self.reranker.rerank(query, merged_results, top_k=reranker_top_k)
+                print(f"重排序完成")
+
             formatted_results = []
             for rank, result in enumerate(merged_results, 1):
-                formatted_results.append({
+                formatted_result = {
                     "rank": rank,
                     "chunk_id": result['chunk_id'],
                     "content": result['content'],
@@ -254,7 +322,11 @@ class RAG:
                     "page": result['metadata'].get('page'),
                     "score": f"{result['score']:.4f}",
                     "metadata": result['metadata']
-                })
+                }
+                # 如果有重排序分数，添加到结果中
+                if 'reranker_score' in result:
+                    formatted_result['reranker_score'] = f"{result['reranker_score']:.4f}"
+                formatted_results.append(formatted_result)
 
             return formatted_results
 
@@ -315,4 +387,28 @@ class RAG:
             print(f"源文件: {source}")
             print(f"内容摘要:\n{chunk.page_content[0:200]}...")
             print("-" * 50)
+
+    def display_enhanced_chunks(self, num_samples: int = 3) -> None:
+        """
+        显示增强后的 chunks（包含摘要、关键词等元数据）
+
+        参数：num_samples - 显示的样本数量
+        """
+        print(f"\n=== 增强后的Chunks信息 ===")
+        print(f"总分块数: {len(self.chunks)}")
+        print("=" * 80)
+
+        for i, chunk in enumerate(self.chunks[:num_samples]):
+            chunk_info = self.data_processor.get_chunk_info(chunk)
+
+            print(f"\n【Chunk {i+1}】")
+            print(f"源文件: {chunk_info['source']}")
+            print(f"页码: {chunk_info['page']}")
+            print(f"文档标题: {chunk_info['document_title']}")
+            print(f"摘要: {chunk_info['summary']}")
+            print(f"关键词: {', '.join(chunk_info['keywords'])}")
+            print("\n内容预览:")
+            print("-" * 80)
+            print(chunk_info['content'][:300] + "...")
+            print("-" * 80)
 

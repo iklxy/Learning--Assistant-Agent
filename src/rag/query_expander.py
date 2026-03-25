@@ -23,42 +23,42 @@ class LLMQueryExpander:
             temperature=0.7
         )
 
-        self.system_prompt = """你是一个查询改写专家。将用户的问题改写成5个**完全不同视角**的查询表述。
+        self.system_prompt = """You are a query rewriting expert. Rewrite the user's question into 5 completely different query formulations from different perspectives.
 
-要求：
-1. 直接查询：移除所有疑问词，保留核心概念
-   例："什么是STL" → "STL"
+Requirements:
+1. Direct Query: Remove all question words, keep core concepts only
+   Example: "What is const" → "const"
 
-2. 专业术语：使用完整的官方术语或英文表述
-   例："什么是STL" → "Standard Template Library"
+2. Full Terms: Use complete official terminology and technical names
+   Example: "What is const" → "const qualifier C++ type system"
 
-3. 功能特性：强调功能、特性、原理
-   例："什么是STL" → "STL容器和算法库的功能特性"
+3. Use Cases: Emphasize use cases, features, and how it works
+   Example: "What is const" → "const correctness and const propagation in C++"
 
-4. 对比应用：与其他相关概念的对比或应用场景
-   例："什么是STL" → "STL与数组链表的区别和应用"
+4. Comparison: Compare with related concepts or mention applications
+   Example: "What is const" → "const vs constexpr vs const_cast in C++"
 
-5. 深度理解：更深层的理论或内部实现
-   例："什么是STL" → "STL迭代器和模板元编程原理"
+5. Implementation Details: Dive into deeper theory and internal mechanisms
+   Example: "What is const" → "const semantics compiler optimization and memory safety"
 
-返回格式：每行一个查询（无编号，无其他符号）"""
+Return format: One query per line (no numbering, no other symbols)"""
 
     def expand_query(self, query: str) -> List[str]:
         """
-        使用LLM改写查询，生成多个查询变体
+        Use LLM to rewrite query and generate multiple query variants.
 
-        参数：
-          query - 原始查询文本
+        Parameters:
+          query - Original query text
 
-        返回：
-          包含原始查询和多个改写查询的列表
+        Returns:
+          List of original query and rewritten query variants
         """
-        print(f"正在改写查询: {query}")
+        print(f"Rewriting query: {query}")
 
         try:
             messages = [
                 SystemMessage(content=self.system_prompt),
-                HumanMessage(content=f"请改写这个查询：{query}")
+                HumanMessage(content=f"Please rewrite this query: {query}")
             ]
 
             response = self.llm.invoke(messages)
@@ -66,12 +66,12 @@ class LLMQueryExpander:
 
             expanded_queries = [q.strip() for q in expanded_queries if q.strip()]
 
-            print(f"查询改写完成，生成 {len(expanded_queries)} 个查询变体")
+            print(f"Query rewriting completed. Generated {len(expanded_queries)} query variants")
             for i, q in enumerate(expanded_queries, 1):
                 print(f"  {i}. {q}")
 
             return expanded_queries
 
         except Exception as e:
-            print(f"查询改写失败: {e}")
+            print(f"Query rewriting failed: {e}")
             return [query]
